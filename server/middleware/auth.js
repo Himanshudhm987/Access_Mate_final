@@ -3,12 +3,16 @@ import crypto from 'node:crypto';
 import db, { logAudit } from '../db.js';
 
 const FALLBACK_SECRET = 'accessmate_dev_secret_key_92837482910384756201928374';
-export const SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? null : FALLBACK_SECRET);
-
-if (process.env.NODE_ENV === 'production' && (!SECRET || SECRET.length < 32)) {
-  console.error('[CRITICAL SECURITY ERROR] In production, JWT_SECRET must be set and at least 32 characters!');
-  process.exit(1);
+let secret = process.env.JWT_SECRET;
+if (!secret || secret.length < 32) {
+  if (process.env.NODE_ENV === 'production') {
+    console.warn('[SECURITY NOTICE] JWT_SECRET was not provided or is under 32 characters. Generating an automatic 256-bit runtime secret.');
+    secret = crypto.randomBytes(32).toString('hex');
+  } else {
+    secret = FALLBACK_SECRET;
+  }
 }
+export const SECRET = secret;
 
 export const COOKIE_NAME = 'accessmate_session';
 export const CSRF_COOKIE_NAME = 'accessmate_csrf';

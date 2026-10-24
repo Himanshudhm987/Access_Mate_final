@@ -159,6 +159,14 @@ if (existsSync(clientDist)) {
     if (req.path.startsWith('/api')) return next();
     res.sendFile(join(clientDist, 'index.html'));
   });
+} else {
+  app.get('/', (_req, res) => {
+    res.json({
+      status: 'ok',
+      message: 'AccessMate API is running.',
+      frontend: 'Client dist not found, ensure build completed.'
+    });
+  });
 }
 
 // Centralized error handler

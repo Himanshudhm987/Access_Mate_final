@@ -6,10 +6,10 @@
   },
   "scripts": {
     "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
-    "build": "npm run build --prefix client",
+    "build": "npm --prefix client install --include=dev && npm --prefix client run build && npm --prefix server install",
     "start": "node server/server.js",
     "test": "npm test --prefix server && npm run build --prefix client",
-    "install:all": "npm install && npm install --prefix client && npm install --prefix server"
+    "install:all": "npm install && npm --prefix client install --include=dev && npm --prefix server install"
   },
   "devDependencies": {
     "concurrently": "^9.0.0"
