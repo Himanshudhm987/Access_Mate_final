@@ -443,9 +443,9 @@ export default function App() {
 
     if (documents && documents.length > 0) {
       const latest = documents[0];
-      setOcrResult(latest.text);
+      setOcrResult(latest?.text || '');
       setPage('reader');
-      notify(`Loaded latest saved text: "${latest.name}"`);
+      notify(`Loaded latest saved text: "${latest?.name || 'Document'}"`);
       return;
     }
 
@@ -461,7 +461,7 @@ export default function App() {
       setPreviewUrl(canvas.toDataURL('image/png'));
       notify(`Rendered page ${newPage} of ${pdfTotalPages}.`);
     } catch (err) {
-      notifyError(err.message);
+      notifyError(err?.message || 'Failed to render PDF page.');
     }
   };
 
@@ -485,20 +485,23 @@ export default function App() {
       const processedCanvas = await preprocessImage(img, preprocessOpts);
 
       setOcrStatusText('Recognizing Hindi & English characters…');
-      const { text, confidence } = await performOcr(
+      const ocrData = await performOcr(
         processedCanvas,
         settings.lang,
         ({ progress, status }) => {
-          setOcrProgress(progress);
-          setOcrStatusText(status);
+          setOcrProgress(progress || 0);
+          setOcrStatusText(status || 'Processing…');
         }
       );
 
-      setOcrResult(text);
-      setOcrConfidence(confidence);
+      const cleanText = (ocrData?.text || '').trim();
+      const score = typeof ocrData?.confidence === 'number' ? ocrData.confidence : 0;
 
-      if (text.trim()) {
-        notify(`OCR Complete! Extracted text with ${confidence}% confidence score.`);
+      setOcrResult(cleanText);
+      setOcrConfidence(score);
+
+      if (cleanText) {
+        notify(`OCR Complete! Extracted text with ${score}% confidence score.`);
         if (settings.autoSpeak) {
           setTimeout(handleSpeak, 500);
         }
@@ -506,7 +509,8 @@ export default function App() {
         notify('No text detected. Try adjusting contrast or lighting.', 'info');
       }
     } catch (err) {
-      notifyError(`OCR failed: ${err.message}`);
+      const errMsg = (err && (err.message || (typeof err === 'string' ? err : null))) || 'Recognition failed. Please try a clearer image.';
+      notifyError(`OCR failed: ${errMsg}`);
     } finally {
       setOcrBusy(false);
       setOcrProgress(100);
@@ -515,7 +519,8 @@ export default function App() {
 
   // Speech Synthesizer
   const handleSpeak = () => {
-    if (!ocrResult.trim()) {
+    const textToSpeak = (ocrResult || '').trim();
+    if (!textToSpeak) {
       notifyError('No text to read aloud.');
       return;
     }
@@ -525,12 +530,12 @@ export default function App() {
     }
 
     stopSpeech();
-    const utterance = new SpeechSynthesisUtterance(ocrResult);
+    const utterance = new SpeechSynthesisUtterance(textToSpeak);
     utterance.rate = rate;
     utterance.volume = volume;
     utterance.pitch = pitch;
 
-    const hasHindi = /[\u0900-\u097F]/.test(ocrResult);
+    const hasHindi = /[\u0900-\u097F]/.test(textToSpeak);
     utterance.lang = hasHindi ? 'hi-IN' : 'en-US';
 
     const chosenVoice = voices.find((v) => v.voiceURI === selectedVoice);
@@ -645,7 +650,7 @@ export default function App() {
 
   const handleCopyText = async () => {
     try {
-      await navigator.clipboard.writeText(ocrResult);
+      await navigator.clipboard.writeText(ocrResult || '');
       notify('Extracted text copied to clipboard!');
     } catch {
       notifyError('Clipboard unavailable. Please select text manually.');
@@ -653,7 +658,7 @@ export default function App() {
   };
 
   const handleDownloadTxt = () => {
-    const blob = new Blob([ocrResult], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([ocrResult || ''], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1324,7 +1329,7 @@ export default function App() {
                   </div>
 
                   <span className="text-xs text-slate-400 font-mono">
-                    {ocrResult.length} chars · {ocrResult.trim() ? ocrResult.trim().split(/\s+/).length : 0} words
+                    {(ocrResult || '').length} chars · {(ocrResult || '').trim() ? (ocrResult || '').trim().split(/\s+/).length : 0} words
                   </span>
                 </div>
 
@@ -1333,7 +1338,7 @@ export default function App() {
                 </label>
                 <textarea
                   id="ocr-text-result"
-                  value={ocrResult}
+                  value={ocrResult || ''}
                   onChange={(e) => setOcrResult(e.target.value)}
                   placeholder="Recognized text will appear here. You can type, edit, or adjust directly."
                   className="w-full min-h-[280px] p-4 text-sm bg-navy-950 border border-navy-700 rounded-xl text-white placeholder-slate-600 focus:border-electric resize-y font-sans leading-relaxed"
@@ -1359,36 +1364,36 @@ export default function App() {
                 {/* Quick Action Navigation Buttons */}
                 <div className="flex flex-wrap gap-2 pt-2">
                   <button
-                    disabled={!ocrResult.trim()}
+                    disabled={!(ocrResult || '').trim()}
                     onClick={() => setPage('translator')}
                     className="btn-secondary text-xs flex items-center gap-1.5"
                   >
                     <Languages size={14} className="text-electric" /> Translate Text
                   </button>
                   <button
-                    disabled={!ocrResult.trim()}
+                    disabled={!(ocrResult || '').trim()}
                     onClick={() => setPage('ai')}
                     className="btn-secondary text-xs flex items-center gap-1.5"
                   >
                     <Bot size={14} className="text-flame" /> Ask AI Explainer
                   </button>
                   <button
-                    disabled={!ocrResult.trim()}
+                    disabled={!(ocrResult || '').trim()}
                     onClick={handleCopyText}
                     className="btn-secondary text-xs"
                   >
                     <Copy size={14} /> Copy
                   </button>
                   <button
-                    disabled={!ocrResult.trim()}
+                    disabled={!(ocrResult || '').trim()}
                     onClick={handleDownloadTxt}
                     className="btn-secondary text-xs"
                   >
                     <Download size={14} /> Download TXT
                   </button>
                   <button
-                    disabled={!ocrResult.trim()}
-                    onClick={() => handleSaveDocument(ocrResult)}
+                    disabled={!(ocrResult || '').trim()}
+                    onClick={() => handleSaveDocument(ocrResult || '')}
                     className="btn-flame text-xs"
                   >
                     <Save size={14} /> Save Document
@@ -1426,7 +1431,7 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   {!speaking ? (
                     <button
-                      disabled={!ocrResult.trim()}
+                      disabled={!(ocrResult || '').trim()}
                       onClick={handleSpeak}
                       className="btn-primary text-xs"
                     >

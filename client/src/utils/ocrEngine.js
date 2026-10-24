@@ -178,6 +178,22 @@ export async function renderPdfPageToCanvas(pdfArrayBuffer, pageNumber = 1) {
 }
 
 /**
+ * Helper to safely extract an error message string
+ */
+function extractErrorMessage(err) {
+  if (!err) return 'Unknown OCR processing error';
+  if (typeof err === 'string') return err;
+  if (typeof err.message === 'string' && err.message.trim()) return err.message.trim();
+  if (typeof err.status === 'string' && err.status.trim()) return err.status.trim();
+  if (err.target && err.target.error) return extractErrorMessage(err.target.error);
+  try {
+    const serialized = JSON.stringify(err);
+    if (serialized && serialized !== '{}') return serialized;
+  } catch {}
+  return String(err);
+}
+
+/**
  * Reusable worker instance manager for Tesseract.js
  */
 export async function getOcrWorker(lang = 'eng+hin', onProgress = () => {}) {
@@ -196,34 +212,76 @@ export async function getOcrWorker(lang = 'eng+hin', onProgress = () => {}) {
     activeLang = null;
   }
 
-  const worker = await createWorker(lang, 1, {
+  const createOptions = {
+    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@v5.1.1/dist/worker.min.js',
+    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.1.0/tesseract-core-simd-lstm.wasm.js',
+    langPath: 'https://tessdata.projectnaptha.com/4.0.0',
     logger: m => {
+      if (!m) return;
       if (m.status === 'recognizing text') {
-        onProgress({ phase: 'recognizing', progress: Math.round(m.progress * 100), status: 'Recognizing text…' });
+        const pct = Math.round(Number(m.progress || 0) * 100);
+        onProgress({ phase: 'recognizing', progress: Math.min(100, Math.max(0, pct)), status: 'Recognizing text…' });
       } else {
-        onProgress({ phase: 'loading', progress: 0, status: m.status });
+        const pct = Math.round(Number(m.progress || 0) * 100);
+        onProgress({ phase: 'loading', progress: Math.min(100, Math.max(0, pct)), status: m.status || 'Loading OCR models…' });
+      }
+    },
+    errorHandler: err => {
+      console.warn('[OCR Worker Warning]:', err);
+    }
+  };
+
+  try {
+    const worker = await createWorker(lang, 1, createOptions);
+    activeWorker = worker;
+    activeLang = lang;
+    return activeWorker;
+  } catch (initialErr) {
+    console.warn(`[OCR Engine] Primary load failed for "${lang}":`, extractErrorMessage(initialErr));
+    // If combined language failed (e.g. hin dataset blocked/timed out), retry with reliable english model
+    if (lang !== 'eng') {
+      try {
+        console.info('[OCR Engine] Falling back to standard "eng" language model...');
+        onProgress({ phase: 'loading', progress: 30, status: 'Retrying with English language model…' });
+        const fallbackWorker = await createWorker('eng', 1, createOptions);
+        activeWorker = fallbackWorker;
+        activeLang = 'eng';
+        return activeWorker;
+      } catch (fallbackErr) {
+        throw new Error(`OCR initialization failed: ${extractErrorMessage(fallbackErr)}`);
       }
     }
-  });
-
-  activeWorker = worker;
-  activeLang = lang;
-  return activeWorker;
+    throw new Error(`OCR initialization failed: ${extractErrorMessage(initialErr)}`);
+  }
 }
 
 /**
  * Perform recognition on image or canvas
  */
 export async function performOcr(imageOrCanvas, lang = 'eng+hin', onProgress = () => {}) {
-  const worker = await getOcrWorker(lang, onProgress);
-  const result = await worker.recognize(imageOrCanvas);
+  try {
+    const worker = await getOcrWorker(lang, onProgress);
+    if (!worker || typeof worker.recognize !== 'function') {
+      throw new Error('OCR worker instance is unavailable or failed to initialize.');
+    }
 
-  return {
-    text: result.data.text.trim(),
-    confidence: Math.round(result.data.confidence || 0),
-    words: result.data.words || [],
-    lines: result.data.lines || []
-  };
+    const result = await worker.recognize(imageOrCanvas);
+    const data = result?.data || {};
+    const text = typeof data.text === 'string' ? data.text.trim() : '';
+    const confidence = typeof data.confidence === 'number' ? Math.round(data.confidence) : 0;
+    const words = Array.isArray(data.words) ? data.words : [];
+    const lines = Array.isArray(data.lines) ? data.lines : [];
+
+    return {
+      text,
+      confidence,
+      words,
+      lines
+    };
+  } catch (err) {
+    console.error('[OCR Recognition Error]:', err);
+    throw new Error(extractErrorMessage(err));
+  }
 }
 
 /**
