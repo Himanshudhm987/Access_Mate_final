@@ -4,7 +4,7 @@ import {
   Heart, Menu, X, Play, Pause, Square, RotateCcw, Copy, Download,
   Check, ChevronRight, FileText, Sparkles, AlertCircle, Trash2, Edit3,
   Search, Users, Activity, Sliders, RefreshCw, ZoomIn, Eye, ArrowUpRight,
-  Languages, Bot, Zap, Flame, Wind
+  Languages, Bot, Zap, Flame, Wind, Mic, MicOff, History, FolderOpen
 } from 'lucide-react';
 
 import ChakraBackground from './components/ChakraBackground.jsx';
@@ -14,6 +14,8 @@ import AuditLogsViewer from './components/AuditLogsViewer.jsx';
 import SystemHealth from './components/SystemHealth.jsx';
 import TranslatorTool from './components/TranslatorTool.jsx';
 import AiHumanAssistant from './components/AiHumanAssistant.jsx';
+import VoiceAssistantWidget from './components/VoiceAssistantWidget.jsx';
+import { VoiceCommander } from './utils/voiceCommander.js';
 import {
   ShinobiHeadbandPlate,
   NinjaRankBadge,
@@ -104,6 +106,36 @@ export default function App() {
   const [docLoading, setDocLoading] = useState(false);
   const [editingDocId, setEditingDocId] = useState(null);
   const [editDocName, setEditDocName] = useState('');
+
+  // Voice Command & Recent Image State
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [lastImageRecord, setLastImageRecord] = useState(() => {
+    try {
+      const saved = localStorage.getItem('accessmate-last-image');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const voiceCommanderRef = useRef(null);
+
+  // Helper to convert DataURL to Blob
+  const dataURItoBlob = (dataURI) => {
+    try {
+      const parts = dataURI.split(',');
+      const byteString = atob(parts[1]);
+      const mimeString = parts[0].split(':')[1].split(';')[0];
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i);
+      }
+      return new Blob([ab], { type: mimeString });
+    } catch {
+      return null;
+    }
+  };
 
   // Refs
   const fileInputRef = useRef(null);
@@ -341,9 +373,83 @@ export default function App() {
       const url = URL.createObjectURL(selectedFile);
       setPreviewUrl(url);
       notify(`Loaded ${selectedFile.name} (${(selectedFile.size / 1024).toFixed(0)} KB).`);
+
+      // Store in lastImageRecord for voice recall
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const record = {
+          name: selectedFile.name,
+          type: selectedFile.type,
+          dataUrl: e.target.result,
+          timestamp: Date.now()
+        };
+        setLastImageRecord(record);
+        try {
+          localStorage.setItem('accessmate-last-image', JSON.stringify(record));
+        } catch {}
+      };
+      reader.readAsDataURL(selectedFile);
     }
 
     setPage('reader');
+  };
+
+  // Voice Command Handlers
+  const handleVoiceOpenFile = () => {
+    setPage('reader');
+    setReaderTab('upload');
+    if (fileInputRef.current) {
+      try {
+        fileInputRef.current.click();
+      } catch {}
+    }
+    setTimeout(() => {
+      try {
+        fileInputRef.current?.click();
+      } catch {}
+    }, 60);
+  };
+
+  const handlePickLastImage = () => {
+    let record = lastImageRecord;
+    if (!record) {
+      try {
+        const saved = localStorage.getItem('accessmate-last-image');
+        if (saved) record = JSON.parse(saved);
+      } catch {}
+    }
+
+    if (record?.dataUrl) {
+      try {
+        const blob = dataURItoBlob(record.dataUrl);
+        if (blob) {
+          const restoredFile = new File([blob], record.name || 'last-image.jpg', {
+            type: record.type || 'image/jpeg'
+          });
+          setFile(restoredFile);
+          setPreviewUrl(record.dataUrl);
+          setIsPdf(false);
+          setPdfBuffer(null);
+          setOcrResult('');
+          setPage('reader');
+          setReaderTab('upload');
+          notify(`Restored last image: "${record.name}"`);
+          return;
+        }
+      } catch (err) {
+        console.warn('Error restoring image:', err);
+      }
+    }
+
+    if (documents && documents.length > 0) {
+      const latest = documents[0];
+      setOcrResult(latest.text);
+      setPage('reader');
+      notify(`Loaded latest saved text: "${latest.name}"`);
+      return;
+    }
+
+    notifyError('No recent image found. Say "Open file" to select one from your folder.');
   };
 
   // PDF page navigation
@@ -578,6 +684,41 @@ export default function App() {
     setOcrResult((prev) => prev + char);
   };
 
+  // Dynamic voice handlers ref — always points to the latest state without tearing down recognition
+  const voiceHandlersRef = useRef({});
+  voiceHandlersRef.current = {
+    onStateChange: (active) => setVoiceListening(active),
+    onTranscript: (phrase) => setVoiceTranscript(phrase),
+    onOpenFile: () => handleVoiceOpenFile(),
+    onPickLastImage: () => handlePickLastImage(),
+    onExtractText: () => handleExtractText(),
+    onSpeak: () => handleSpeak(),
+    onPause: () => handlePauseSpeech(),
+    onResume: () => handleResumeSpeech(),
+    onStopSpeech: () => stopSpeech(),
+    onSaveDocument: () => handleSaveDocument(),
+    onCopyText: () => handleCopyText(),
+    onClear: () => {
+      setOcrResult('');
+      setOcrConfidence(0);
+      notify('Document cleared.');
+    },
+    onSetTheme: (newTheme) => setSettings((s) => ({ ...s, theme: newTheme })),
+    onTranslate: () => setPage('translator'),
+    onNavigate: (targetPage) => setPage(targetPage),
+    onError: (msg) => notifyError(msg)
+  };
+
+  // Mount Voice Commander once with non-teardown dynamic handler lookup
+  useEffect(() => {
+    const commander = new VoiceCommander(() => voiceHandlersRef.current);
+    voiceCommanderRef.current = commander;
+
+    return () => {
+      commander.stop();
+    };
+  }, []);
+
   const themeClass =
     settings.theme === 'light'
       ? 'theme-light'
@@ -726,7 +867,22 @@ export default function App() {
           </nav>
 
           {/* User Profile / Auth Action */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            {/* Quick Voice Command Toggle in Header */}
+            <button
+              onClick={() => voiceCommanderRef.current?.toggle()}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
+                voiceListening
+                  ? 'bg-sky-400 text-obsidian-950 shadow-md animate-pulse ring-2 ring-sky-300'
+                  : 'btn-secondary text-slate-200 hover:text-white'
+              }`}
+              title={voiceListening ? 'Voice command listening active. Click to stop' : 'Click to start voice command'}
+              aria-label="Toggle voice command"
+            >
+              <Mic size={14} className={voiceListening ? 'text-obsidian-950 animate-bounce' : 'text-sky-400'} />
+              <span className="hidden md:inline">{voiceListening ? 'Listening…' : 'Voice Control'}</span>
+            </button>
+
             {user ? (
               <div className="flex items-center gap-2.5">
                 <div className="hidden sm:flex flex-col text-right">
@@ -765,6 +921,18 @@ export default function App() {
         {/* Mobile Navigation Menu */}
         {mobileMenu && (
           <nav aria-label="Mobile Menu" className="lg:hidden border-t border-navy-700 bg-obsidian-950 px-4 py-4 space-y-2">
+            <button
+              onClick={() => {
+                setMobileMenu(false);
+                voiceCommanderRef.current?.toggle();
+              }}
+              className={`w-full text-left p-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition ${
+                voiceListening ? 'bg-sky-400 text-obsidian-950 ring-2 ring-sky-300' : 'bg-navy-900 border border-navy-700 text-sky-400'
+              }`}
+            >
+              <Mic size={15} />
+              {voiceListening ? 'Listening Active (Tap to Stop)' : 'Voice Command Control (Tap to Speak)'}
+            </button>
             {[
               ['Home', 'home'],
               ['OCR Studio', 'reader'],
@@ -1646,6 +1814,15 @@ export default function App() {
         api={api}
         notify={notify}
         setErrorMsg={notifyError}
+      />
+
+      {/* Interactive Voice Assistant Floating Widget */}
+      <VoiceAssistantWidget
+        isListening={voiceListening}
+        onToggle={() => voiceCommanderRef.current?.toggle()}
+        lastTranscript={voiceTranscript}
+        onRunSampleCommand={(sampleCmd) => voiceCommanderRef.current?.matchAndExecute(sampleCmd)}
+        supported={voiceCommanderRef.current?.supported ?? true}
       />
     </div>
   );

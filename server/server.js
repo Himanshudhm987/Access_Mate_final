@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { join, dirname } from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,7 +30,7 @@ const PORT = Number(process.env.PORT || 5000);
 const ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 const isProd = process.env.NODE_ENV === 'production';
 
-if (process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1') {
+if (process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1' || isProd) {
   app.set('trust proxy', 1);
 }
 
@@ -58,12 +59,29 @@ const allowedOrigins = [
   'http://127.0.0.1:5000'
 ];
 
+function isOriginAllowed(origin, host) {
+  if (!origin || !isProd) return true;
+  if (allowedOrigins.includes(origin)) return true;
+  try {
+    const parsed = new URL(origin);
+    if (parsed.hostname.endsWith('.onrender.com') || parsed.hostname.endsWith('.vercel.app')) {
+      return true;
+    }
+    if (host && (parsed.host === host)) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 app.disable('x-powered-by');
 
 // CORS configuration
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || !isProd) {
+    if (isOriginAllowed(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Blocked by CORS'));
@@ -79,7 +97,7 @@ app.use(cookieParser());
 app.use((req, res, next) => {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin) {
     const origin = req.headers.origin;
-    if (isProd && !allowedOrigins.includes(origin)) {
+    if (!isOriginAllowed(origin, req.headers.host)) {
       return res.status(403).json({ error: 'Invalid request origin' });
     }
   }
@@ -132,6 +150,16 @@ app.use('/api/system', systemRoutes);
 app.use('/api/*', (_req, res) => {
   res.status(404).json({ error: 'Endpoint not found' });
 });
+
+// Serve production static frontend if client/dist exists
+const clientDist = join(__dirname, '../client/dist');
+if (existsSync(clientDist)) {
+  app.use(express.static(clientDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(join(clientDist, 'index.html'));
+  });
+}
 
 // Centralized error handler
 app.use((err, req, res, _next) => {

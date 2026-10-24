@@ -1,1 +1,17 @@
-{"name":"accessmate","private":true,"scripts":{"dev":"concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"","test":"npm test --prefix server && npm run build --prefix client","install:all":"npm install && npm install --prefix client && npm install --prefix server"},"devDependencies":{"concurrently":"^9.0.0"}}
+{
+  "name": "accessmate",
+  "private": true,
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "build": "npm run build --prefix client",
+    "start": "node server/server.js",
+    "test": "npm test --prefix server && npm run build --prefix client",
+    "install:all": "npm install && npm install --prefix client && npm install --prefix server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}
